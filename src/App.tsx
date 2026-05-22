@@ -688,7 +688,7 @@ function PracticeStage(props: PracticeStageProps) {
 }
 
 type StreamPhase = 'idle' | 'playing' | 'paused'
-type StreamForceMode = 'none' | 'attract' | 'repel'
+type StreamForceMode = 'none' | 'attract'
 type NoiseKind = 'spark' | 'text' | 'wave' | 'fish' | 'bubble'
 type StreamNoise = {
   id: number
@@ -758,6 +758,8 @@ function ThoughtLabeling({ copy, onFinish }: PracticeStageProps) {
     targetX: 0.5,
     targetY: 0.52,
     active: false,
+    buttons: 0,
+    pointerType: '',
     forceMode: 'none' as StreamForceMode,
   })
   const noiseRef = useRef<StreamNoise[]>([])
@@ -815,6 +817,8 @@ function ThoughtLabeling({ copy, onFinish }: PracticeStageProps) {
       targetX: 0.5,
       targetY: 0.52,
       active: false,
+      buttons: 0,
+      pointerType: '',
       forceMode: 'none',
     }
     startedAtRef.current = performance.now()
@@ -840,6 +844,8 @@ function ThoughtLabeling({ copy, onFinish }: PracticeStageProps) {
     pointerRef.current.targetX = (event.clientX - rect.left) / rect.width
     pointerRef.current.targetY = (event.clientY - rect.top) / rect.height
     pointerRef.current.active = true
+    pointerRef.current.buttons = event.buttons
+    pointerRef.current.pointerType = event.pointerType
     pointerRef.current.forceMode = nextForceMode
     markForceUsed(nextForceMode)
     lastInputRef.current = performance.now()
@@ -847,6 +853,8 @@ function ThoughtLabeling({ copy, onFinish }: PracticeStageProps) {
 
   function releasePointer(event?: PointerEvent<HTMLCanvasElement>) {
     pointerRef.current.active = Boolean(event?.buttons)
+    pointerRef.current.buttons = event?.buttons ?? 0
+    pointerRef.current.pointerType = event?.pointerType ?? pointerRef.current.pointerType
     const nextForceMode = event ? getPointerForceMode(event) : 'none'
     pointerRef.current.forceMode = nextForceMode
     markForceUsed(nextForceMode)
@@ -946,9 +954,13 @@ function ThoughtLabeling({ copy, onFinish }: PracticeStageProps) {
 
 function getPointerForceMode(event: PointerEvent<HTMLCanvasElement>): StreamForceMode {
   if (event.pointerType && event.pointerType !== 'mouse') return 'none'
-  if ((event.buttons & 2) === 2) return 'repel'
   if ((event.buttons & 1) === 1) return 'attract'
   return 'none'
+}
+
+function isNormalBoatContact(pointer: { forceMode: StreamForceMode; buttons: number; pointerType: string }) {
+  if (pointer.forceMode !== 'none') return false
+  return pointer.pointerType === 'mouse' ? pointer.buttons === 0 : true
 }
 
 function createStreamNoise() {
@@ -1004,6 +1016,8 @@ function drawStreamFrame(
       targetX: number
       targetY: number
       active: boolean
+      buttons: number
+      pointerType: string
       forceMode: StreamForceMode
     }
     noise: StreamNoise[]
@@ -1054,7 +1068,7 @@ function drawStreamFrame(
     const iy = item.y * height
     const distance = Math.hypot(px - ix, py - iy)
     applyBoatHoldForce(item, pointer, state.delta, distance, dpr)
-    handleBoatContact(item, px, py, ix, iy, distance, width, height, pointer.forceMode)
+    handleBoatContact(item, px, py, ix, iy, distance, width, height, isNormalBoatContact(pointer))
     const influence = getStreamInfluence(item.kind, px - ix, py - iy, distance, width, dpr)
     const restInfluence = restRatio * Math.max(0, 1 - distance / ringRadius)
     const totalInfluence = Math.max(influence, restInfluence)
@@ -1098,7 +1112,6 @@ function applyBoatHoldForce(
   dpr: number,
 ) {
   if (pointer.forceMode === 'none' || item.gone || item.burst > 0) return
-  if (item.kind === 'bubble' && pointer.forceMode === 'repel') return
   const radius = STREAM_FORCE_DISTANCE * dpr
   if (distancePx >= radius) return
 
@@ -1107,13 +1120,12 @@ function applyBoatHoldForce(
   const distance = Math.max(0.001, Math.hypot(dx, dy))
   const nx = dx / distance
   const ny = dy / distance
-  const direction = pointer.forceMode === 'attract' ? 1 : -1
   const falloff = 1 - distancePx / radius
-  const fishAttractionResistance = item.kind === 'fish' && item.calm < 0.55 && pointer.forceMode === 'attract' ? 0.12 : 1
+  const fishAttractionResistance = item.kind === 'fish' && item.calm < 0.55 ? 0.12 : 1
   const force = 0.0000048 * falloff * falloff * delta * fishAttractionResistance
-  item.vx += nx * force * direction
-  item.vy += ny * force * direction
-  if (item.kind === 'spark' && pointer.forceMode === 'attract') {
+  item.vx += nx * force
+  item.vy += ny * force
+  if (item.kind === 'spark') {
     applySparkOrbitAssist(item, nx, ny, distancePx, falloff, delta, dpr)
   }
   item.touch = Math.max(item.touch, falloff * 0.5)
@@ -1256,7 +1268,7 @@ function handleBoatContact(
   distance: number,
   width: number,
   height: number,
-  forceMode: StreamForceMode,
+  isNormalContact: boolean,
 ) {
   if (item.kind !== 'spark' && item.kind !== 'bubble' && item.kind !== 'fish') return
   if (item.burst > 0) return
@@ -1294,7 +1306,7 @@ function handleBoatContact(
   item.vy = outVy / height
   item.x += (nx * correction) / width
   item.y += (ny * correction) / height
-  if (item.kind === 'bubble' && forceMode !== 'repel') {
+  if (item.kind === 'bubble' && !isNormalContact) {
     item.hitCooldown = 180
     item.touch = 1
     keepInsideBox(item, width, height)
@@ -1570,7 +1582,7 @@ function drawPlayerWake(
   if (phase === 'idle') return
   ctx.save()
   ctx.globalAlpha = phase === 'paused' ? 0.2 : forceMode === 'none' ? 0.32 : 0.42
-  ctx.strokeStyle = forceMode === 'attract' ? '#8000ff' : forceMode === 'repel' ? '#00a88a' : '#fff7d7'
+  ctx.strokeStyle = forceMode === 'attract' ? '#8000ff' : '#fff7d7'
   ctx.lineWidth = Math.max(2, width * 0.0022)
   const wakeBack = Math.min(width * 0.34, 360)
   const wakeFront = Math.min(width * (0.26 + restRatio * 0.16), 330)
@@ -1975,8 +1987,8 @@ function drawPlayer(
       ctx.stroke()
     }
   }
-  if (forceMode !== 'none') {
-    drawPlayerForceField(ctx, x, y, time, forceMode, width)
+  if (forceMode === 'attract') {
+    drawPlayerForceField(ctx, x, y, time, width)
   }
 
   const bob = Math.sin(time * 1.1) * 4
@@ -2001,17 +2013,15 @@ function drawPlayerForceField(
   x: number,
   y: number,
   time: number,
-  forceMode: StreamForceMode,
   width: number,
 ) {
-  const attract = forceMode === 'attract'
-  const color = attract ? '#8000ff' : '#00a88a'
+  const color = '#8000ff'
   const drift = (time * 28) % 42
   ctx.save()
   ctx.strokeStyle = color
   ctx.lineWidth = Math.max(1.5, width * 0.0018)
   for (let i = 0; i < 4; i++) {
-    const base = attract ? 142 - i * 28 - drift : 50 + i * 32 + drift
+    const base = 142 - i * 28 - drift
     const radius = Math.max(28, base)
     ctx.globalAlpha = 0.26 - i * 0.035
     ctx.beginPath()
@@ -2023,13 +2033,13 @@ function drawPlayerForceField(
   ctx.globalAlpha = 0.22
   for (let i = 0; i < 8; i++) {
     const angle = time * 0.55 + i * (Math.PI / 4)
-    const radius = attract ? 96 - ((time * 18 + i * 9) % 34) : 68 + ((time * 18 + i * 9) % 42)
+    const radius = 96 - ((time * 18 + i * 9) % 34)
     ctx.beginPath()
     ctx.ellipse(
       x + Math.cos(angle) * radius,
       y + Math.sin(angle) * radius,
-      attract ? 3 : 5,
-      attract ? 5 : 3,
+      3,
+      5,
       angle,
       0,
       Math.PI * 2,
