@@ -12,6 +12,8 @@ dist
 dist-ssr
 *.local
 .notebook
+promo-cover/
+promo-images/
 
 # Editor directories and files
 .vscode/*
