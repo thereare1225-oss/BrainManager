@@ -18,7 +18,16 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import './App.css'
-import { interventions, interventionsById } from './data/interventions'
+import {
+  englishActionDeck,
+  LANGUAGE_KEY,
+  loadLanguage,
+  localizeInterventions,
+  scoreLabel,
+  uiCopy,
+  type AppLanguage,
+  type UiCopy,
+} from './i18n'
 import type { BrainState, Intervention, SessionResult } from './types'
 
 type Stage = 'before' | 'practice' | 'after'
@@ -133,14 +142,6 @@ function loadSessions() {
   }
 }
 
-function scoreLabel(score: number) {
-  if (score <= 2) return '很难受'
-  if (score <= 4) return '偏乱'
-  if (score <= 6) return '一般'
-  if (score <= 8) return '比较稳'
-  return '很稳'
-}
-
 function formatTime(seconds: number) {
   const minutes = Math.floor(seconds / 60)
   const rest = seconds % 60
@@ -152,11 +153,12 @@ function hasSafetyRisk(text: string) {
   return safetyTerms.some((term) => normalized.includes(term))
 }
 
-function getActionDeck() {
-  return Object.values(actionDecks).flat()
+function getActionDeck(language: AppLanguage) {
+  return language === 'zh' ? Object.values(actionDecks).flat() : englishActionDeck
 }
 
 function App() {
+  const [language, setLanguage] = useState<AppLanguage>(loadLanguage)
   const [sessions, setSessions] = useState<SessionResult[]>(loadSessions)
   const [selectedId, setSelectedId] = useState<BrainState | null>(null)
   const [stage, setStage] = useState<Stage>('before')
@@ -170,13 +172,19 @@ function App() {
   const [coolingActions, setCoolingActions] = useState<string[]>([])
   const [breathMode, setBreathMode] = useState<BreathMode>('count')
 
-  const selected = selectedId ? interventionsById[selectedId] : null
+  const copy = uiCopy[language]
+  const localized = useMemo(() => localizeInterventions(language), [language])
+  const selected = selectedId ? localized.interventionsById[selectedId] : null
   const latestSessions = sessions.slice(0, 5)
   const needsSupport = hasSafetyRisk(note)
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions))
   }, [sessions])
+
+  useEffect(() => {
+    localStorage.setItem(LANGUAGE_KEY, language)
+  }, [language])
 
   useEffect(() => {
     if (stage !== 'practice') return
@@ -204,7 +212,7 @@ function App() {
   )
 
   function chooseIntervention(id: BrainState) {
-    const intervention = interventionsById[id]
+    const intervention = localized.interventionsById[id]
     setSelectedId(id)
     setStage(intervention.kind === 'thought-labeling' ? 'practice' : 'before')
     setBeforeScore(5)
@@ -252,9 +260,20 @@ function App() {
   }
 
   function drawActionCard() {
-    const deck = getActionDeck()
+    const deck = getActionDeck(language)
     const next = deck[Math.floor(Math.random() * deck.length)]
     setActionCard(next)
+  }
+
+  function toggleLanguage() {
+    setLanguage((current) => {
+      const next = current === 'zh' ? 'en' : 'zh'
+      if (selected?.kind === 'action-card') {
+        const deck = getActionDeck(next)
+        setActionCard(deck[Math.floor(Math.random() * deck.length)])
+      }
+      return next
+    })
   }
 
   if (!selected) {
@@ -262,8 +281,13 @@ function App() {
       <main className="app-shell">
         <HomeScreen
           sessions={latestSessions}
+          interventions={localized.interventions}
+          interventionsById={localized.interventionsById}
+          language={language}
+          copy={copy}
           onChoose={chooseIntervention}
           onClearSessions={clearSessions}
+          onToggleLanguage={toggleLanguage}
         />
       </main>
     )
@@ -281,8 +305,8 @@ function App() {
           type="button"
           className="icon-button"
           onClick={() => setSelectedId(null)}
-          aria-label="返回首页"
-          title="返回首页"
+          aria-label={copy.backHome}
+          title={copy.backHome}
         >
           <ArrowLeft size={20} />
         </button>
@@ -290,6 +314,7 @@ function App() {
           <p className="eyebrow">BrainManager v1</p>
           <h1>{selected.title}</h1>
         </div>
+        <LanguageToggle copy={copy} onToggle={toggleLanguage} />
       </header>
 
       <section
@@ -298,15 +323,17 @@ function App() {
         }`}
       >
         <aside className="module-brief">
-          <StateSignal intervention={selected} />
+          <StateSignal intervention={selected} copy={copy} />
           <StepList intervention={selected} />
-          <EvidencePanel intervention={selected} />
+          <EvidencePanel intervention={selected} copy={copy} />
         </aside>
 
         <section className="practice-panel">
           {stage === 'before' && (
             <BeforeStage
               intervention={selected}
+              language={language}
+              copy={copy}
               score={beforeScore}
               breathMode={breathMode}
               onScore={setBeforeScore}
@@ -318,6 +345,8 @@ function App() {
           {stage === 'practice' && (
             <PracticeStage
               intervention={selected}
+              language={language}
+              copy={copy}
               remaining={remaining}
               labelCounts={labelCounts}
               completedLabels={completedLabels}
@@ -354,6 +383,8 @@ function App() {
           {stage === 'after' && (
             <AfterStage
               intervention={selected}
+              language={language}
+              copy={copy}
               beforeScore={beforeScore}
               afterScore={afterScore}
               note={note}
@@ -375,11 +406,25 @@ function App() {
 
 interface HomeProps {
   sessions: SessionResult[]
+  interventions: Intervention[]
+  interventionsById: Record<BrainState, Intervention>
+  language: AppLanguage
+  copy: UiCopy
   onChoose: (id: BrainState) => void
   onClearSessions: () => void
+  onToggleLanguage: () => void
 }
 
-function HomeScreen({ sessions, onChoose, onClearSessions }: HomeProps) {
+function HomeScreen({
+  sessions,
+  interventions,
+  interventionsById,
+  language,
+  copy,
+  onChoose,
+  onClearSessions,
+  onToggleLanguage,
+}: HomeProps) {
   return (
     <>
       <header className="home-header">
@@ -389,16 +434,15 @@ function HomeScreen({ sessions, onChoose, onClearSessions }: HomeProps) {
           </div>
           <div>
             <p className="eyebrow">BrainManager v1</p>
-            <h1>现在脑子是什么状态？</h1>
+            <h1>{copy.homeTitle}</h1>
           </div>
         </div>
-        <p className="quiet-copy">
-          这是一个个人自助工具。它不判断病情，也不保证结果，只帮你用短练习记录前后变化。
-        </p>
+        <p className="quiet-copy">{copy.homeCopy}</p>
+        <LanguageToggle copy={copy} onToggle={onToggleLanguage} />
       </header>
 
       <section className="home-layout">
-        <div className="state-grid" aria-label="选择当前状态">
+        <div className="state-grid" aria-label={copy.chooseState}>
           {interventions.map((intervention, index) => {
             const Icon = iconMap[intervention.id]
             return (
@@ -427,23 +471,23 @@ function HomeScreen({ sessions, onChoose, onClearSessions }: HomeProps) {
         <aside className="history-panel">
           <div className="history-heading">
             <div>
-              <p className="eyebrow">本地记录</p>
-              <h2>最近 5 次</h2>
+              <p className="eyebrow">{copy.localRecords}</p>
+              <h2>{copy.recentSessions}</h2>
             </div>
             {sessions.length > 0 && (
               <button
                 type="button"
                 className="icon-button"
                 onClick={onClearSessions}
-                aria-label="清除本地记录"
-                title="清除本地记录"
+                aria-label={copy.clearRecords}
+                title={copy.clearRecords}
               >
                 <Trash2 size={18} />
               </button>
             )}
           </div>
           {sessions.length === 0 ? (
-            <p className="muted">完成一轮后，这里会显示前后评分变化。</p>
+            <p className="muted">{copy.emptyHistory}</p>
           ) : (
             <ul className="history-list">
               {sessions.map((session) => {
@@ -456,7 +500,7 @@ function HomeScreen({ sessions, onChoose, onClearSessions }: HomeProps) {
                       {delta >= 0 ? '+' : ''}
                       {delta}
                     </strong>
-                    <time>{new Intl.DateTimeFormat('zh-CN', {
+                    <time>{new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
                       month: '2-digit',
                       day: '2-digit',
                       hour: '2-digit',
@@ -468,7 +512,7 @@ function HomeScreen({ sessions, onChoose, onClearSessions }: HomeProps) {
             </ul>
           )}
           <div className="author-contact">
-            <span>联系作者</span>
+            <span>{copy.contactAuthor}</span>
             <a href="mailto:thereare1225@gmail.com">thereare1225@gmail.com</a>
           </div>
         </aside>
@@ -477,7 +521,28 @@ function HomeScreen({ sessions, onChoose, onClearSessions }: HomeProps) {
   )
 }
 
-function StateSignal({ intervention }: { intervention: Intervention }) {
+function LanguageToggle({
+  copy,
+  onToggle,
+}: {
+  copy: UiCopy
+  onToggle: () => void
+}) {
+  return (
+    <button
+      type="button"
+      className="language-toggle"
+      onClick={onToggle}
+      aria-label={copy.switchLanguage}
+      title={copy.switchLanguage}
+    >
+      <span>{copy.languageName}</span>
+      <strong>{copy.languageToggle}</strong>
+    </button>
+  )
+}
+
+function StateSignal({ intervention, copy }: { intervention: Intervention; copy: UiCopy }) {
   const Icon = iconMap[intervention.id]
   return (
     <div className="state-signal">
@@ -485,7 +550,7 @@ function StateSignal({ intervention }: { intervention: Intervention }) {
         <Icon size={24} />
       </span>
       <div>
-        <p className="eyebrow">当前入口</p>
+        <p className="eyebrow">{copy.currentEntry}</p>
         <h2>{intervention.subtitle}</h2>
       </div>
     </div>
@@ -506,10 +571,10 @@ function StepList({ intervention }: { intervention: Intervention }) {
   )
 }
 
-function EvidencePanel({ intervention }: { intervention: Intervention }) {
+function EvidencePanel({ intervention, copy }: { intervention: Intervention; copy: UiCopy }) {
   return (
     <details className="evidence-panel">
-      <summary>为什么这样设计</summary>
+      <summary>{copy.whyDesigned}</summary>
       <div className="evidence-list">
         {intervention.evidence.map((item) => (
           <a key={item.url} href={item.url} target="_blank" rel="noreferrer">
@@ -529,6 +594,8 @@ function EvidencePanel({ intervention }: { intervention: Intervention }) {
 
 interface BeforeStageProps {
   intervention: Intervention
+  language: AppLanguage
+  copy: UiCopy
   score: number
   breathMode: BreathMode
   onScore: (score: number) => void
@@ -538,6 +605,8 @@ interface BeforeStageProps {
 
 function BeforeStage({
   intervention,
+  language,
+  copy,
   score,
   breathMode,
   onScore,
@@ -548,20 +617,20 @@ function BeforeStage({
 
   return (
     <div className="stage-content">
-      <p className="stage-kicker">开始前</p>
-      <h2>{isGuidedCloud ? '直接开始降噪' : '现在主观状态打几分？'}</h2>
+      <p className="stage-kicker">{copy.before}</p>
+      <h2>{isGuidedCloud ? copy.directStart : copy.scoreNow}</h2>
       {isGuidedCloud && (
-        <p className="quick-start-copy">分数已经默认填好。现在不用分析自己，先做一轮短动作。</p>
+        <p className="quick-start-copy">{copy.quickStart}</p>
       )}
-      <ScoreControl score={score} onScore={onScore} />
+      <ScoreControl score={score} language={language} copy={copy} onScore={onScore} />
 
       {intervention.kind === 'breathing' && (
-        <BreathModeSwitch mode={breathMode} onMode={onBreathMode} />
+        <BreathModeSwitch mode={breathMode} copy={copy} onMode={onBreathMode} />
       )}
 
       <button type="button" className="primary-action" onClick={onStart}>
         <CheckCircle2 size={20} />
-        {isGuidedCloud ? '开始降噪' : '开始这一轮'}
+        {isGuidedCloud ? copy.startDenoise : copy.startRound}
       </button>
     </div>
   )
@@ -569,6 +638,8 @@ function BeforeStage({
 
 interface PracticeStageProps {
   intervention: Intervention
+  language: AppLanguage
+  copy: UiCopy
   remaining: number
   labelCounts: Record<string, number>
   completedLabels: number
@@ -598,19 +669,19 @@ function PracticeStage(props: PracticeStageProps) {
     <div className={`stage-content practice-stage ${isSelfSootheGame ? 'game-stage' : ''}`}>
       {!isSelfSootheGame && (
         <div className="timer-row">
-          <span className="stage-kicker">练习中</span>
+          <span className="stage-kicker">{props.copy.practicing}</span>
           <strong>{formatTime(props.remaining)}</strong>
         </div>
       )}
 
       {props.intervention.kind === 'action-card' && <ActionCardPractice {...props} />}
-      {props.intervention.kind === 'self-soothe' && <SelfSoothePractice onComplete={props.onFinish} />}
+      {props.intervention.kind === 'self-soothe' && <SelfSoothePractice copy={props.copy} onComplete={props.onFinish} />}
       {props.intervention.kind === 'rest-path' && <RestPathPractice {...props} />}
       {props.intervention.kind === 'cooldown' && <CooldownPractice {...props} />}
       {props.intervention.kind === 'breathing' && <BreathingPractice {...props} />}
 
       <button type="button" className="secondary-action" onClick={props.onFinish}>
-        完成本轮
+        {props.copy.finishRound}
       </button>
     </div>
   )
@@ -670,7 +741,7 @@ const STREAM_NOISE_COUNTS: Record<NoiseKind, number> = {
   bubble: 13,
 }
 
-function ThoughtLabeling({ onFinish }: PracticeStageProps) {
+function ThoughtLabeling({ copy, onFinish }: PracticeStageProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const animationRef = useRef<number | null>(null)
   const audioRef = useRef<StreamAudio | null>(null)
@@ -824,7 +895,7 @@ function ThoughtLabeling({ onFinish }: PracticeStageProps) {
 
   return (
     <div className="stream-layout">
-      <section className={`stream-game stream-${phase}`} aria-label="静流脑内降噪游戏">
+      <section className={`stream-game stream-${phase}`} aria-label={copy.streamGameLabel}>
         <canvas
           ref={canvasRef}
           className="stream-canvas"
@@ -840,7 +911,7 @@ function ThoughtLabeling({ onFinish }: PracticeStageProps) {
 
         {phase === 'idle' && (
           <button type="button" className="stream-start" onClick={startStream}>
-            开始
+            {copy.streamStart}
           </button>
         )}
 
@@ -850,7 +921,7 @@ function ThoughtLabeling({ onFinish }: PracticeStageProps) {
               type="button"
               className="stream-exit"
               onClick={onFinish}
-              aria-label="回到现实"
+              aria-label={copy.returnReality}
             >
               <LogOut size={18} />
             </button>
@@ -858,16 +929,16 @@ function ThoughtLabeling({ onFinish }: PracticeStageProps) {
               type="button"
               className="stream-pause"
               onClick={togglePause}
-              aria-label={phase === 'paused' ? '继续' : '暂停'}
+              aria-label={phase === 'paused' ? copy.resume : copy.pause}
             >
               {phase === 'paused' ? <Play size={20} /> : <Pause size={20} />}
             </button>
           </>
         )}
       </section>
-      <aside className="stream-side-hint" aria-label="脑内降噪提示">
-        <strong>尝试让噪声安静下来</strong>
-        {showForceTip && <span className="stream-force-tip">按住左键牵引，按住右键推开</span>}
+      <aside className="stream-side-hint" aria-label={copy.denoiseHint}>
+        <strong>{copy.denoiseHint}</strong>
+        {showForceTip && <span className="stream-force-tip">{copy.forceTip}</span>}
       </aside>
     </div>
   )
@@ -2011,12 +2082,12 @@ function updateStreamAudio(audio: StreamAudio | null, settled: number, phase: St
   audio.hum.frequency.linearRampToValueAtTime(78 - settled * 12, now + 0.8)
 }
 
-function ActionCardPractice({ actionCard, onDrawCard }: PracticeStageProps) {
+function ActionCardPractice({ actionCard, copy, onDrawCard }: PracticeStageProps) {
   return (
     <>
       <div className="action-ticket">
         <div className="action-ticket-top">
-          <span>行动卡</span>
+          <span>{copy.actionCard}</span>
           <em>{actionCard.lane}</em>
         </div>
         <strong>{actionCard.title}</strong>
@@ -2025,9 +2096,9 @@ function ActionCardPractice({ actionCard, onDrawCard }: PracticeStageProps) {
       </div>
       <button type="button" className="utility-action" onClick={onDrawCard}>
         <Shuffle size={18} />
-        换一张卡
+        {copy.drawAnother}
       </button>
-      <p className="practice-note">这组卡不处理任务，只让身体、环境或感官动一点。抽到不合适就换。</p>
+      <p className="practice-note">{copy.actionNote}</p>
     </>
   )
 }
@@ -2147,12 +2218,12 @@ const SOOTHE_SEQUENCE_STEPS: Array<{ id: SootheSequenceStep; label: string }> = 
   { id: 'hearth', label: '暖炉' },
 ]
 
-function SelfSoothePractice({ onComplete }: { onComplete: () => void }) {
+function SelfSoothePractice({ copy, onComplete }: { copy: UiCopy; onComplete: () => void }) {
   const [step, setStep] = useState<SootheSequenceStep>('harbor')
 
   return (
     <div className="soothe-sequence">
-      <div className="soothe-progress" aria-label="选择伤心自愈关卡">
+      <div className="soothe-progress" aria-label={copy.selfSootheStageLabel}>
         {SOOTHE_SEQUENCE_STEPS.map((item) => (
           <button
             key={item.id}
@@ -2160,20 +2231,20 @@ function SelfSoothePractice({ onComplete }: { onComplete: () => void }) {
             className={item.id === step ? 'active' : ''}
             onClick={() => setStep(item.id)}
           >
-            {item.label}
+            {copy.sootheLabels[item.id]}
           </button>
         ))}
       </div>
-      {step === 'harbor' && <HarborSoothePractice onComplete={() => setStep('weave')} />}
-      {step === 'weave' && <EchoOrganizePractice onComplete={() => setStep('garden')} />}
-      {step === 'garden' && <SoftGardenPractice />}
-      {step === 'bridge' && <StarBridgePractice onComplete={() => setStep('hearth')} />}
-      {step === 'hearth' && <WarmHearthPractice onComplete={onComplete} />}
+      {step === 'harbor' && <HarborSoothePractice copy={copy} onComplete={() => setStep('weave')} />}
+      {step === 'weave' && <EchoOrganizePractice copy={copy} onComplete={() => setStep('garden')} />}
+      {step === 'garden' && <SoftGardenPractice copy={copy} />}
+      {step === 'bridge' && <StarBridgePractice copy={copy} onComplete={() => setStep('hearth')} />}
+      {step === 'hearth' && <WarmHearthPractice copy={copy} onComplete={onComplete} />}
     </div>
   )
 }
 
-function HarborSoothePractice({ onComplete }: { onComplete: () => void }) {
+function HarborSoothePractice({ copy, onComplete }: { copy: UiCopy; onComplete: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const animationRef = useRef<number | null>(null)
   const gameRef = useRef<HarborGame | null>(null)
@@ -2258,7 +2329,7 @@ function HarborSoothePractice({ onComplete }: { onComplete: () => void }) {
         <canvas
           ref={canvasRef}
           className="harbor-canvas"
-          aria-label="移动暖灯接住泪滴，把暖珠带到裂片旁"
+          aria-label={copy.harborAria}
           onPointerDown={moveLantern}
           onPointerMove={moveLantern}
           onMouseDown={moveLantern}
@@ -2365,7 +2436,7 @@ type EchoSegment = {
   locked: boolean
 }
 
-function EchoOrganizePractice({ onComplete }: { onComplete: () => void }) {
+function EchoOrganizePractice({ copy, onComplete }: { copy: UiCopy; onComplete: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const animationRef = useRef<number | null>(null)
   const completedRef = useRef(false)
@@ -2426,7 +2497,7 @@ function EchoOrganizePractice({ onComplete }: { onComplete: () => void }) {
       <canvas
         ref={canvasRef}
         className="harbor-canvas"
-        aria-label="移动暖光整理回声"
+        aria-label={copy.echoAria}
         onPointerDown={moveLight}
         onPointerMove={moveLight}
         onMouseDown={moveLight}
@@ -2694,7 +2765,7 @@ type StarBridgeGame = {
   completedAt: number | null
 }
 
-function StarBridgePractice({ onComplete }: { onComplete: () => void }) {
+function StarBridgePractice({ copy, onComplete }: { copy: UiCopy; onComplete: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const animationRef = useRef<number | null>(null)
   const lastFrameRef = useRef(0)
@@ -2750,7 +2821,7 @@ function StarBridgePractice({ onComplete }: { onComplete: () => void }) {
       <canvas
         ref={canvasRef}
         className="harbor-canvas"
-        aria-label="移动暖光搭起星桥"
+        aria-label={copy.bridgeAria}
         onPointerDown={moveLight}
         onPointerMove={moveLight}
         onMouseDown={moveLight}
@@ -2989,7 +3060,7 @@ type WarmHearthGame = {
   completedAt: number | null
 }
 
-function WarmHearthPractice({ onComplete }: { onComplete: () => void }) {
+function WarmHearthPractice({ copy, onComplete }: { copy: UiCopy; onComplete: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const animationRef = useRef<number | null>(null)
   const lastFrameRef = useRef(0)
@@ -3045,7 +3116,7 @@ function WarmHearthPractice({ onComplete }: { onComplete: () => void }) {
       <canvas
         ref={canvasRef}
         className="harbor-canvas"
-        aria-label="移动暖光守住暖炉"
+        aria-label={copy.hearthAria}
         onPointerDown={moveLight}
         onPointerMove={moveLight}
         onMouseDown={moveLight}
@@ -3656,7 +3727,7 @@ function drawWarmHearthCompletion(ctx: CanvasRenderingContext2D, game: WarmHeart
   ctx.restore()
 }
 
-function SoftGardenPractice() {
+function SoftGardenPractice({ copy }: { copy: UiCopy }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const animationRef = useRef<number | null>(null)
   const lastFrameRef = useRef(0)
@@ -3698,7 +3769,7 @@ function SoftGardenPractice() {
       <canvas
         ref={canvasRef}
         className="harbor-canvas"
-        aria-label="移动暖光让花园慢慢亮起"
+        aria-label={copy.gardenAria}
         onPointerDown={moveLight}
         onPointerMove={moveLight}
         onMouseDown={moveLight}
@@ -5816,8 +5887,8 @@ function hexToRgb(hex: string) {
   }
 }
 
-function RestPathPractice({ restChecks, onToggleRest }: PracticeStageProps) {
-  const items = ['眼睛离开屏幕 20 秒', '肩颈慢慢转一圈', '看自然画面或窗外', '手腕和手指放松']
+function RestPathPractice({ copy, restChecks, onToggleRest }: PracticeStageProps) {
+  const items = [...copy.restItems]
   return (
     <>
       <div className="nature-window" aria-hidden="true">
@@ -5843,22 +5914,22 @@ function RestPathPractice({ restChecks, onToggleRest }: PracticeStageProps) {
   )
 }
 
-function CooldownPractice({ coolingActions, onToggleCooling }: PracticeStageProps) {
-  const items = ['做一次慢呼气', '放松肩膀', '把回复延迟 10 分钟', '下巴松开']
+function CooldownPractice({ copy, coolingActions, onToggleCooling }: PracticeStageProps) {
+  const items = [...copy.coolingItems]
   const heat = Math.max(18, 92 - coolingActions.length * 18)
   return (
     <>
       <div className="cooldown-board">
         <div
           className="heat-meter"
-          aria-label={`当前热度 ${heat}`}
+          aria-label={`${copy.heatAria} ${heat}`}
           style={{ '--heat-level': `${heat}%` } as React.CSSProperties}
         >
           <span />
         </div>
         <div className="cooldown-copy">
-          <strong>{heat <= 38 ? '温度已经降下来了' : '先把热度往下调'}</strong>
-          <span>慢呼气、松肩颈、延迟回复。这里不做发泄动作。</span>
+          <strong>{heat <= 38 ? copy.heatLow : copy.heatHigh}</strong>
+          <span>{copy.heatCopy}</span>
         </div>
       </div>
       <div className="check-grid">
@@ -5878,10 +5949,10 @@ function CooldownPractice({ coolingActions, onToggleCooling }: PracticeStageProp
   )
 }
 
-function BreathingPractice({ breathMode, onBreathMode }: PracticeStageProps) {
+function BreathingPractice({ breathMode, copy, onBreathMode }: PracticeStageProps) {
   return (
     <>
-      <BreathModeSwitch mode={breathMode} onMode={onBreathMode} />
+      <BreathModeSwitch mode={breathMode} copy={copy} onMode={onBreathMode} />
       <div className="breath-space">
         <div className="breath-orb" aria-hidden="true">
           <span />
@@ -5889,13 +5960,13 @@ function BreathingPractice({ breathMode, onBreathMode }: PracticeStageProps) {
         <div className="breath-copy">
           {breathMode === 'count' ? (
             <>
-              <strong>吸 1 2 3 4</strong>
-              <span>呼 1 2 3 4 5 6</span>
+              <strong>{copy.inhale}</strong>
+              <span>{copy.exhale}</span>
             </>
           ) : (
             <>
-              <strong>只看圆环</strong>
-              <span>不用数，不屏息。</span>
+              <strong>{copy.watchRing}</strong>
+              <span>{copy.noCount}</span>
             </>
           )}
         </div>
@@ -5906,6 +5977,8 @@ function BreathingPractice({ breathMode, onBreathMode }: PracticeStageProps) {
 
 interface AfterStageProps {
   intervention: Intervention
+  language: AppLanguage
+  copy: UiCopy
   beforeScore: number
   afterScore: number
   note: string
@@ -5918,6 +5991,8 @@ interface AfterStageProps {
 
 function AfterStage({
   intervention,
+  language,
+  copy,
   beforeScore,
   afterScore,
   note,
@@ -5931,12 +6006,12 @@ function AfterStage({
 
   return (
     <div className="stage-content">
-      <p className="stage-kicker">结束后</p>
-      <h2>{intervention.kind === 'thought-labeling' ? '这一轮结束了' : '现在再打一次分'}</h2>
+      <p className="stage-kicker">{copy.after}</p>
+      <h2>{intervention.kind === 'thought-labeling' ? copy.roundEnded : copy.scoreAgain}</h2>
       {intervention.kind === 'thought-labeling' && (
-        <p className="quick-start-copy">不用写总结。只看一下现在比开始时有没有松一点。</p>
+        <p className="quick-start-copy">{copy.afterDenoiseCopy}</p>
       )}
-      <ScoreControl score={afterScore} onScore={onScore} />
+      <ScoreControl score={afterScore} language={language} copy={copy} onScore={onScore} />
       <div className="result-strip">
         <span>{intervention.title}</span>
         <strong className={delta >= 0 ? 'delta-good' : 'delta-low'}>
@@ -5945,53 +6020,63 @@ function AfterStage({
         </strong>
       </div>
       <label className="note-field">
-        <span>{intervention.kind === 'thought-labeling' ? '想留一句就写，不想写直接保存' : '可选记录'}</span>
+        <span>{intervention.kind === 'thought-labeling' ? copy.optionalThoughtNote : copy.optionalNote}</span>
         <textarea
           value={note}
           onChange={(event) => onNote(event.target.value)}
           rows={4}
-          placeholder="例如：贴了 8 次标签后，脑子没停，但没那么追着想法跑。"
+          placeholder={copy.notePlaceholder}
         />
       </label>
-      {needsSupport && <SafetyNotice />}
+      {needsSupport && <SafetyNotice copy={copy} />}
       <div className="action-row">
         <button type="button" className="secondary-action" onClick={onRestart}>
           <RotateCcw size={18} />
-          再来一轮
+          {copy.restart}
         </button>
         <button type="button" className="primary-action" onClick={onSave}>
           <CheckCircle2 size={20} />
-          保存并回首页
+          {copy.saveAndHome}
         </button>
       </div>
     </div>
   )
 }
 
-function SafetyNotice() {
+function SafetyNotice({ copy }: { copy: UiCopy }) {
   return (
     <div className="safety-notice" role="alert">
       <AlertTriangle size={20} />
       <div>
-        <strong>先暂停这个练习</strong>
+        <strong>{copy.safetyTitle}</strong>
         <p>
-          如果此刻可能伤害自己，请立刻联系身边可信任的人或当地急救电话。在美国可拨打或短信 988，也可以访问{' '}
+          {copy.safetyBody}{' '}
           <a href="https://988lifeline.org/" target="_blank" rel="noreferrer">
             988lifeline.org
           </a>
-          。
+          .
         </p>
       </div>
     </div>
   )
 }
 
-function ScoreControl({ score, onScore }: { score: number; onScore: (score: number) => void }) {
+function ScoreControl({
+  score,
+  language,
+  copy,
+  onScore,
+}: {
+  score: number
+  language: AppLanguage
+  copy: UiCopy
+  onScore: (score: number) => void
+}) {
   return (
     <div className="score-control">
       <div className="score-readout">
         <strong>{score}</strong>
-        <span>{scoreLabel(score)}</span>
+        <span>{scoreLabel(score, language)}</span>
       </div>
       <input
         type="range"
@@ -5999,11 +6084,11 @@ function ScoreControl({ score, onScore }: { score: number; onScore: (score: numb
         max="10"
         value={score}
         onChange={(event) => onScore(Number(event.target.value))}
-        aria-label="当前状态评分"
+        aria-label={copy.scoreAria}
       />
       <div className="score-scale">
-        <span>0 很糟</span>
-        <span>10 很稳</span>
+        <span>{copy.scoreLow}</span>
+        <span>{copy.scoreHigh}</span>
       </div>
     </div>
   )
@@ -6011,28 +6096,30 @@ function ScoreControl({ score, onScore }: { score: number; onScore: (score: numb
 
 function BreathModeSwitch({
   mode,
+  copy,
   onMode,
 }: {
   mode: BreathMode
+  copy: UiCopy
   onMode: (mode: BreathMode) => void
 }) {
   return (
     <div className="control-block">
-      <span className="control-label">关注方式</span>
+      <span className="control-label">{copy.focusMode}</span>
       <div className="segmented">
         <button
           type="button"
           className={mode === 'count' ? 'active' : ''}
           onClick={() => onMode('count')}
         >
-          数节奏
+          {copy.countMode}
         </button>
         <button
           type="button"
           className={mode === 'visual' ? 'active' : ''}
           onClick={() => onMode('visual')}
         >
-          只看圆环
+          {copy.visualMode}
         </button>
       </div>
     </div>
