@@ -1,0 +1,60 @@
+:root {
+  --paper: #f6f1e6;
+  --surface: #fffdf8;
+  --ink: #17201b;
+  --muted: #657066;
+  --line: #d8d0bf;
+  --accent: #2f7f8f;
+  --display: "Microsoft YaHei UI", "Noto Serif SC", "Songti SC", Georgia, serif;
+  --body: "Microsoft YaHei UI", "Noto Sans CJK SC", "Segoe UI", sans-serif;
+  --mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  --shadow-small: 0 12px 28px rgba(39, 35, 26, 0.07);
+  --shadow-medium: 0 18px 34px rgba(39, 35, 26, 0.12);
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.45;
+  font-weight: 400;
+  color: var(--ink);
+  background:
+    linear-gradient(90deg, rgba(23, 32, 27, 0.04) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(23, 32, 27, 0.035) 1px, transparent 1px),
+    var(--paper);
+  background-size: 42px 42px;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100svh;
+  margin: 0;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+  letter-spacing: 0;
+}
+
+button {
+  border: 0;
+}
+
+a {
+  color: inherit;
+}
+
+#root {
+  min-height: 100svh;
+}
