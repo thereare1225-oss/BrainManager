@@ -189,7 +189,7 @@ export const interventions: Intervention[] = [
       {
         title: '先降唤醒',
         body: '用慢呼气和放松肩颈让身体温度往下走。',
-        cue: '这里不做发泄动作。',
+        cue: '拖动重锤甩向热块，轻点不算。',
       },
       {
         title: '延迟反应',

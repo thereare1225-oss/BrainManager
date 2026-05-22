@@ -5924,9 +5924,164 @@ function RestPathPractice({ copy, restChecks, onToggleRest }: PracticeStageProps
   )
 }
 
+const COOLING_SMASH_TARGETS = [
+  { label: '01', x: 0.24, y: 0.34, rotate: -9 },
+  { label: '02', x: 0.52, y: 0.58, rotate: 7 },
+  { label: '03', x: 0.76, y: 0.32, rotate: -5 },
+  { label: '04', x: 0.76, y: 0.72, rotate: 10 },
+]
+
+const COOLING_SMASH_START = { x: 0.16, y: 0.78 }
+
+type CooldownSmashState = 'idle' | 'dragging' | 'miss' | 'impact' | 'shatter'
+type SmashPoint = { x: number; y: number }
+type SmashArenaPoint = SmashPoint & { width: number; height: number }
+
 function CooldownPractice({ copy, coolingActions, onToggleCooling }: PracticeStageProps) {
   const items = [...copy.coolingItems]
-  const heat = Math.max(18, 92 - coolingActions.length * 18)
+  const [smashProgress, setSmashProgress] = useState(() => COOLING_SMASH_TARGETS.map(() => 0))
+  const [activeSmashIndex, setActiveSmashIndex] = useState(0)
+  const [smashState, setSmashState] = useState<CooldownSmashState>('idle')
+  const [smashImpact, setSmashImpact] = useState(0)
+  const [smashDriver, setSmashDriver] = useState<SmashPoint>(COOLING_SMASH_START)
+  const [smashImpactPoint, setSmashImpactPoint] = useState<SmashPoint>(COOLING_SMASH_TARGETS[0])
+  const [smashTrail, setSmashTrail] = useState<SmashPoint[]>(() => [COOLING_SMASH_START])
+  const [smashSpeed, setSmashSpeed] = useState(0)
+  const smashDragRef = useRef({
+    active: false,
+    hitDuringDrag: false,
+    lastTime: 0,
+    lastX: COOLING_SMASH_START.x,
+    lastY: COOLING_SMASH_START.y,
+    moved: 0,
+    pointerId: -1,
+  })
+  const smashCooldownRef = useRef(0)
+  const smashRelease = smashProgress.reduce((sum, value) => sum + value, 0) / smashProgress.length
+  const brokenTargets = smashProgress.filter((value) => value >= 1).length
+  const heat = Math.max(18, 92 - coolingActions.length * 18 - Math.round(smashRelease * 42))
+  const smashComplete = brokenTargets === COOLING_SMASH_TARGETS.length
+  const activeTarget = COOLING_SMASH_TARGETS[Math.min(activeSmashIndex, COOLING_SMASH_TARGETS.length - 1)]
+  const smashPower = Math.min(1, smashSpeed / 1500)
+  const smashMessage = smashComplete
+    ? copy.ventGameDone
+    : smashState === 'miss'
+      ? copy.ventGameMiss
+      : smashState === 'shatter'
+          ? copy.ventGameShatter
+          : smashState === 'impact'
+            ? copy.ventGameImpact
+            : copy.ventGameHint
+
+  useEffect(() => {
+    if (smashState === 'idle' || smashState === 'dragging') return
+
+    const timer = window.setTimeout(() => {
+      setSmashState('idle')
+      setSmashSpeed(0)
+    }, 740)
+
+    return () => window.clearTimeout(timer)
+  }, [smashState])
+
+  function getSmashPoint(event: PointerEvent<HTMLDivElement>): SmashArenaPoint {
+    const rect = event.currentTarget.getBoundingClientRect()
+    return {
+      x: clamp01((event.clientX - rect.left) / rect.width),
+      y: clamp01((event.clientY - rect.top) / rect.height),
+      width: rect.width,
+      height: rect.height,
+    }
+  }
+
+  function hitSmashTarget(point: SmashArenaPoint, speed: number) {
+    const now = window.performance.now()
+    if (smashComplete || now - smashCooldownRef.current < 320 || speed < 620) return false
+
+    const dx = (point.x - activeTarget.x) * point.width
+    const dy = (point.y - activeTarget.y) * point.height
+    const hitRadius = Math.min(point.width, point.height) * 0.2 + 34
+    if (Math.hypot(dx, dy) > hitRadius) return false
+
+    smashCooldownRef.current = now
+    smashDragRef.current.hitDuringDrag = true
+    setSmashImpactPoint({ x: activeTarget.x, y: activeTarget.y })
+    setSmashImpact((current) => current + 1)
+    const damage = 0.42 + clamp01((speed - 620) / 1200) * 0.78
+    const shattered = damage >= 0.86
+    setSmashState(shattered ? 'shatter' : 'impact')
+    window.navigator.vibrate?.(shattered ? [18, 22, 20] : 16)
+    setSmashProgress((current) => {
+      const next = [...current]
+      next[activeSmashIndex] = clamp01(next[activeSmashIndex] + damage)
+      if (next[activeSmashIndex] >= 1) {
+        const nextIndex = next.findIndex((value, index) => index > activeSmashIndex && value < 1)
+        setActiveSmashIndex(nextIndex === -1 ? COOLING_SMASH_TARGETS.length - 1 : nextIndex)
+      }
+      return next
+    })
+    return true
+  }
+
+  function startSmashDrag(event: PointerEvent<HTMLDivElement>) {
+    if (smashComplete) return
+
+    event.preventDefault()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    const point = getSmashPoint(event)
+    smashDragRef.current = {
+      active: true,
+      hitDuringDrag: false,
+      lastTime: window.performance.now(),
+      lastX: point.x,
+      lastY: point.y,
+      moved: 0,
+      pointerId: event.pointerId,
+    }
+    setSmashDriver({ x: point.x, y: point.y })
+    setSmashTrail([point])
+    setSmashSpeed(0)
+    setSmashState('dragging')
+  }
+
+  function moveSmashDrag(event: PointerEvent<HTMLDivElement>) {
+    const drag = smashDragRef.current
+    if (!drag.active || drag.pointerId !== event.pointerId || smashComplete) return
+
+    event.preventDefault()
+    const point = getSmashPoint(event)
+    const now = window.performance.now()
+    const elapsed = Math.max(16, now - drag.lastTime)
+    const movePx = Math.hypot((point.x - drag.lastX) * point.width, (point.y - drag.lastY) * point.height)
+    const speed = (movePx / elapsed) * 1000
+    drag.moved += movePx
+    drag.lastX = point.x
+    drag.lastY = point.y
+    drag.lastTime = now
+    setSmashDriver({ x: point.x, y: point.y })
+    setSmashTrail((current) => [...current.slice(-5), { x: point.x, y: point.y }])
+    setSmashSpeed(speed)
+    hitSmashTarget(point, speed)
+  }
+
+  function endSmashDrag(event: PointerEvent<HTMLDivElement>) {
+    const drag = smashDragRef.current
+    if (!drag.active || drag.pointerId !== event.pointerId) return
+
+    drag.active = false
+    event.preventDefault()
+    if (!drag.hitDuringDrag && drag.moved < 42) {
+      setSmashState('miss')
+      setSmashSpeed(0)
+      window.navigator.vibrate?.(8)
+      return
+    }
+    if (!drag.hitDuringDrag && smashState === 'dragging') {
+      setSmashState('miss')
+      setSmashSpeed(0)
+    }
+  }
+
   return (
     <>
       <div className="cooldown-board">
@@ -5940,6 +6095,90 @@ function CooldownPractice({ copy, coolingActions, onToggleCooling }: PracticeSta
         <div className="cooldown-copy">
           <strong>{heat <= 38 ? copy.heatLow : copy.heatHigh}</strong>
           <span>{copy.heatCopy}</span>
+        </div>
+      </div>
+      <div
+        className={`rage-smash-game ${smashState} ${smashComplete ? 'complete' : ''}`}
+        aria-label={copy.ventGameAria}
+        style={
+          {
+            '--driver-x': `${smashDriver.x * 100}%`,
+            '--driver-y': `${smashDriver.y * 100}%`,
+            '--smash-power': smashPower,
+            '--smash-release': `${Math.round(smashRelease * 100)}%`,
+            '--smash-target-x': `${smashImpactPoint.x * 100}%`,
+            '--smash-target-y': `${smashImpactPoint.y * 100}%`,
+          } as React.CSSProperties
+        }
+      >
+        <div
+          className="smash-arena"
+          onContextMenu={(event) => event.preventDefault()}
+          onPointerCancel={endSmashDrag}
+          onPointerDown={startSmashDrag}
+          onPointerMove={moveSmashDrag}
+          onPointerUp={endSmashDrag}
+        >
+          <div className="smash-status">
+            <strong>{copy.ventGameTitle}</strong>
+            <span>{smashMessage}</span>
+          </div>
+          {COOLING_SMASH_TARGETS.map((target, index) => (
+            <span
+              key={target.label}
+              className={`smash-target ${index === activeSmashIndex && !smashComplete ? 'active' : ''} ${smashProgress[index] >= 1 ? 'broken' : ''}`}
+              style={
+                {
+                  '--target-x': `${target.x * 100}%`,
+                  '--target-y': `${target.y * 100}%`,
+                  '--target-rotate': `${target.rotate}deg`,
+                  '--target-break': smashProgress[index],
+                  '--target-break-percent': `${Math.round(smashProgress[index] * 100)}%`,
+                } as React.CSSProperties
+              }
+            >
+              <i />
+              <b>{target.label}</b>
+            </span>
+          ))}
+          {smashTrail.map((point, index) => (
+            <span
+              key={`${index}-${point.x}-${point.y}`}
+              className="smash-trail"
+              style={
+                {
+                  '--trail-x': `${point.x * 100}%`,
+                  '--trail-y': `${point.y * 100}%`,
+                  '--trail-alpha': (index + 1) / smashTrail.length,
+                } as React.CSSProperties
+              }
+            />
+          ))}
+          <div className="smash-driver" aria-hidden="true">
+            <Flame size={22} />
+          </div>
+          <div key={smashImpact} className="smash-burst">
+            {Array.from({ length: 18 }, (_, index) => (
+              <span
+                key={index}
+                style={
+                  {
+                    '--burst-angle': `${index * 20}deg`,
+                    '--burst-distance': `${62 + (index % 5) * 13}px`,
+                    '--burst-delay': `${(index % 3) * 14}ms`,
+                  } as React.CSSProperties
+                }
+              />
+            ))}
+          </div>
+        </div>
+        <div className="smash-score" aria-hidden="true">
+          {COOLING_SMASH_TARGETS.map((target, index) => (
+            <span
+              key={target.label}
+              className={smashProgress[index] >= 1 ? 'done' : index === activeSmashIndex ? 'active' : ''}
+            />
+          ))}
         </div>
       </div>
       <div className="check-grid">
