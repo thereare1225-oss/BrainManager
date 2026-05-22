@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://brain-manager-lac.vercel.app/sitemap.xml
